@@ -8,10 +8,487 @@
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<meta name="viewport" content="width=device-width" />
 		<meta name="generator" content={Astro.generator} />
-		<title>Mona Mayhem</title>
+		<title>Mona Mayhem Battle Arena</title>
+		<style>
+			:root {
+				color-scheme: light;
+				font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+			}
+
+			body {
+				margin: 0;
+				padding: 2rem 1rem;
+				background: #f7f7f8;
+				color: #151515;
+			}
+
+			main {
+				max-width: 780px;
+				margin: 0 auto;
+			}
+
+			h1 {
+				margin: 0 0 0.75rem;
+				font-size: 2rem;
+			}
+
+			p.lead {
+				margin: 0 0 1.5rem;
+				color: #444;
+			}
+
+			section.card {
+				background: #fff;
+				border: 1px solid #ddd;
+				border-radius: 10px;
+				padding: 1rem;
+			}
+
+			form {
+				display: grid;
+				gap: 0.75rem;
+			}
+
+			.form-row {
+				display: grid;
+				grid-template-columns: 1fr;
+				gap: 0.75rem;
+			}
+
+			label {
+				display: grid;
+				gap: 0.35rem;
+				font-weight: 600;
+				font-size: 0.95rem;
+			}
+
+			input {
+				padding: 0.65rem 0.7rem;
+				font-size: 1rem;
+				border: 1px solid #c8c8c8;
+				border-radius: 8px;
+			}
+
+			button {
+				padding: 0.75rem 1rem;
+				font-size: 1rem;
+				font-weight: 700;
+				border: none;
+				border-radius: 8px;
+				background: #111;
+				color: #fff;
+				cursor: pointer;
+			}
+
+			button:disabled {
+				opacity: 0.65;
+				cursor: wait;
+			}
+
+			#status {
+				margin-top: 0.9rem;
+				min-height: 1.5rem;
+				font-weight: 600;
+			}
+
+			#results {
+				margin-top: 1rem;
+				display: grid;
+				gap: 0.8rem;
+			}
+
+			#results.has-battle {
+				grid-template-columns: 1fr;
+				align-items: start;
+			}
+
+			.result-card {
+				border: 1px solid #ddd;
+				border-radius: 8px;
+				padding: 0.75rem;
+				background: #fafafa;
+			}
+
+			.result-card h3 {
+				margin: 0 0 0.4rem;
+				font-size: 1rem;
+			}
+
+			.result-card p {
+				margin: 0.2rem 0;
+			}
+
+			.result-meta {
+				font-size: 0.92rem;
+				color: #444;
+			}
+
+			.contrib-grid {
+				margin-top: 0.6rem;
+				display: grid;
+				grid-template-columns: repeat(26, minmax(8px, 1fr));
+				gap: 3px;
+			}
+
+			.contrib-cell {
+				width: 100%;
+				aspect-ratio: 1 / 1;
+				border-radius: 2px;
+				border: 1px solid rgba(0, 0, 0, 0.06);
+			}
+
+			.vs-badge {
+				display: grid;
+				place-items: center;
+				min-height: 96px;
+				background: #111;
+				color: #fff;
+				font-weight: 800;
+				font-size: 1.15rem;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
+			}
+
+			.error {
+				color: #a61f1f;
+			}
+
+			.status-error {
+				color: #a61f1f;
+			}
+
+			.status-loading {
+				color: #1d4ed8;
+			}
+
+			@media (min-width: 640px) {
+				.form-row {
+					grid-template-columns: 1fr 1fr;
+				}
+
+				#results.has-battle {
+					grid-template-columns: 1fr auto 1fr;
+				}
+
+				.vs-badge {
+					min-width: 72px;
+					padding: 0.75rem;
+				}
+			}
+		</style>
 	</head>
 	<body>
-		<h1>Mona Mayhem</h1>
-		<p>Welcome to Mona Mayhem! Time to build a GitHub Contribution Battle Arena.</p>
+		<main>
+			<h1>Mona Mayhem</h1>
+			<p class="lead">GitHub Contribution Battle Arena</p>
+
+			<section class="card" aria-labelledby="battle-heading">
+				<h2 id="battle-heading">Start a Battle</h2>
+				<form data-battle-form>
+					<div class="form-row">
+						<label>
+							Player 1 GitHub Username
+							<input name="player1" type="text" placeholder="octocat" required />
+						</label>
+						<label>
+							Player 2 GitHub Username
+							<input name="player2" type="text" placeholder="mona" required />
+						</label>
+					</div>
+					<button type="submit" data-battle-button>Battle</button>
+				</form>
+
+				<div id="status" aria-live="polite"></div>
+				<div id="results" aria-live="polite"></div>
+			</section>
+		</main>
+
+		<script>
+			interface ContributionDay {
+				date: string;
+				count: number;
+				level: number;
+			}
+
+			interface ContributionEnvelope {
+				contributions?: ContributionDay[];
+				total?: number;
+			}
+
+			interface ContributionsApiError {
+				error?: string;
+			}
+
+			interface PlayerContributionData {
+				username: string;
+				days: ContributionDay[];
+				total: number;
+				dateRange: string;
+			}
+
+			type PlayerResult =
+				| {
+						ok: true;
+						data: PlayerContributionData;
+				  }
+				| {
+						ok: false;
+						username: string;
+						error: string;
+				  };
+
+			const form = document.querySelector<HTMLFormElement>('[data-battle-form]');
+			const battleButton = document.querySelector<HTMLButtonElement>('[data-battle-button]');
+			const statusElement = document.querySelector<HTMLDivElement>('#status');
+			const resultsElement = document.querySelector<HTMLDivElement>('#results');
+			const playerInputs = document.querySelectorAll<HTMLInputElement>('input[name="player1"], input[name="player2"]');
+
+			const GITHUB_PALETTE = ['#ebedf0', '#9be9a8', '#40c463', '#30a14e', '#216e39'];
+
+			function setStatus(message: string, kind: 'default' | 'loading' | 'error' = 'default'): void {
+				if (!statusElement) {
+					return;
+				}
+
+				statusElement.textContent = message;
+				statusElement.classList.remove('status-loading', 'status-error');
+				if (kind === 'loading') {
+					statusElement.classList.add('status-loading');
+				}
+				if (kind === 'error') {
+					statusElement.classList.add('status-error');
+				}
+			}
+
+			function isContributionDay(value: unknown): value is ContributionDay {
+				if (!value || typeof value !== 'object') {
+					return false;
+				}
+
+				const candidate = value as Partial<ContributionDay>;
+				return (
+					typeof candidate.date === 'string' &&
+					typeof candidate.count === 'number' &&
+					typeof candidate.level === 'number'
+				);
+			}
+
+			function normalizeContributions(payload: unknown): ContributionDay[] {
+				if (Array.isArray(payload)) {
+					return payload.filter(isContributionDay);
+				}
+
+				if (payload && typeof payload === 'object') {
+					const envelope = payload as ContributionEnvelope;
+					if (Array.isArray(envelope.contributions)) {
+						return envelope.contributions.filter(isContributionDay);
+					}
+				}
+
+				return [];
+			}
+
+			function formatDate(isoDate: string): string {
+				const date = new Date(`${isoDate}T00:00:00Z`);
+				if (Number.isNaN(date.getTime())) {
+					return isoDate;
+				}
+
+				return new Intl.DateTimeFormat(undefined, {
+					month: 'short',
+					day: 'numeric',
+					year: 'numeric',
+				}).format(date);
+			}
+
+			function buildDateRange(days: ContributionDay[]): string {
+				if (days.length === 0) {
+					return 'No contribution dates available';
+				}
+
+				const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
+				const start = sorted[0]?.date ?? '';
+				const end = sorted[sorted.length - 1]?.date ?? '';
+
+				return `${formatDate(start)} - ${formatDate(end)}`;
+			}
+
+			function getLevelColor(level: number): string {
+				if (Number.isNaN(level) || level < 0) {
+					return GITHUB_PALETTE[0];
+				}
+
+				const index = Math.min(level, GITHUB_PALETTE.length - 1);
+				return GITHUB_PALETTE[index] ?? GITHUB_PALETTE[0];
+			}
+
+			function renderContributionGrid(days: ContributionDay[]): HTMLDivElement {
+				const grid = document.createElement('div');
+				grid.className = 'contrib-grid';
+
+				if (days.length === 0) {
+					const empty = document.createElement('p');
+					empty.className = 'result-meta';
+					empty.textContent = 'No graph data available.';
+					grid.appendChild(empty);
+					return grid;
+				}
+
+				const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
+				for (const day of sorted) {
+					const cell = document.createElement('span');
+					cell.className = 'contrib-cell';
+					cell.style.backgroundColor = getLevelColor(day.level);
+					cell.title = `${formatDate(day.date)}: ${day.count} contributions`;
+					grid.appendChild(cell);
+				}
+				return grid;
+			}
+
+			function renderPlayerCard(result: PlayerResult): HTMLElement {
+				const card = document.createElement('article');
+				card.className = 'result-card';
+
+				const header = document.createElement('h3');
+				header.textContent = result.ok ? result.data.username : result.username;
+				card.appendChild(header);
+
+				if (!result.ok) {
+					const errorText = document.createElement('p');
+					errorText.className = 'error';
+					errorText.textContent = result.error;
+					card.appendChild(errorText);
+					return card;
+				}
+
+				const total = document.createElement('p');
+				total.textContent = `Total Contributions: ${result.data.total}`;
+				card.appendChild(total);
+
+				const range = document.createElement('p');
+				range.className = 'result-meta';
+				range.textContent = `Date Range: ${result.data.dateRange}`;
+				card.appendChild(range);
+
+				card.appendChild(renderContributionGrid(result.data.days));
+				return card;
+			}
+
+			function renderVsBadge(): HTMLElement {
+				const badge = document.createElement('article');
+				badge.className = 'result-card vs-badge';
+				badge.textContent = 'VS';
+				badge.setAttribute('aria-label', 'Versus');
+				return badge;
+			}
+
+			async function fetchPlayerResult(username: string): Promise<PlayerResult> {
+				const response = await fetch(`/api/contributions/${encodeURIComponent(username)}`);
+				if (!response.ok) {
+					let message = `Failed to load data for ${username}.`;
+					try {
+						const errorBody = (await response.json()) as ContributionsApiError;
+						if (typeof errorBody?.error === 'string' && errorBody.error.trim()) {
+							message = errorBody.error;
+						}
+					} catch {
+						// Keep fallback message when the API error body is not JSON.
+					}
+
+					return { ok: false, username, error: message };
+				}
+
+				const payload = await response.json();
+				const days = normalizeContributions(payload);
+				const total = days.reduce((sum, day) => sum + day.count, 0);
+				return {
+					ok: true,
+					data: {
+						username,
+						days,
+						total,
+						dateRange: buildDateRange(days),
+					},
+				};
+			}
+
+			function buildBattleStatus(left: PlayerResult, right: PlayerResult): { text: string; kind: 'default' | 'error' } {
+				if (!left.ok || !right.ok) {
+					return {
+						text: 'Battle completed with errors. Review the player cards below.',
+						kind: 'error',
+					};
+				}
+
+				if (left.data.total === right.data.total) {
+					return {
+						text: `Draw! ${left.data.username} and ${right.data.username} are tied at ${left.data.total}.`,
+						kind: 'default',
+					};
+				}
+
+				const winner = left.data.total > right.data.total ? left.data : right.data;
+				return {
+					text: `Winner: ${winner.username} with ${winner.total} contributions.`,
+					kind: 'default',
+				};
+			}
+
+			async function runBattle(): Promise<void> {
+				if (!form || !battleButton || !resultsElement) {
+					return;
+				}
+
+				const formData = new FormData(form);
+				const player1 = String(formData.get('player1') ?? '').trim();
+				const player2 = String(formData.get('player2') ?? '').trim();
+
+				resultsElement.textContent = '';
+				resultsElement.classList.remove('has-battle');
+
+				if (!player1 || !player2) {
+					setStatus('Please enter both GitHub usernames.', 'error');
+					return;
+				}
+
+				battleButton.disabled = true;
+				setStatus('Loading contribution data...', 'loading');
+
+				try {
+					const [leftResult, rightResult] = await Promise.all([
+						fetchPlayerResult(player1),
+						fetchPlayerResult(player2),
+					]);
+
+					resultsElement.classList.add('has-battle');
+					resultsElement.appendChild(renderPlayerCard(leftResult));
+					resultsElement.appendChild(renderVsBadge());
+					resultsElement.appendChild(renderPlayerCard(rightResult));
+
+					const status = buildBattleStatus(leftResult, rightResult);
+					setStatus(status.text, status.kind);
+				} catch {
+					setStatus('Unable to complete battle right now. Please try again.', 'error');
+				} finally {
+					battleButton.disabled = false;
+				}
+			}
+
+			if (form) {
+				form.addEventListener('submit', async (event) => {
+					event.preventDefault();
+					await runBattle();
+				});
+			}
+
+			for (const input of playerInputs) {
+				input.addEventListener('keydown', (event: KeyboardEvent) => {
+					if (event.key === 'Enter') {
+						event.preventDefault();
+						form?.requestSubmit();
+					}
+				});
+			}
+		</script>
 	</body>
 </html>
